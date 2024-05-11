@@ -1,5 +1,5 @@
 use actix_cors::Cors;
-use actix_web::{ http::header, web, App, HttpServer, Responder, HttpResponse};
+use actix_web::{http::header, web, App, HttpServer, Responder, HttpResponse};
 use serde::{Deserialize, Serialize};
 use reqwest::Client as HttpClient;
 use async_trait::async_trait;
@@ -9,72 +9,54 @@ use std::sync::Mutex;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
+use rand::Rng;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct Task {
+struct Game {
     id: u64,
-    name: String,
-    completed: bool
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct User {
-    id: u64,
-    username: String,
-    password: String
+    guess: u64,
+    number: u64,
+    hint: String,
+    result: String
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Database {
-    tasks: HashMap<u64, Task>,
-    users: HashMap<u64, User>,
+    games: HashMap<u64, Game>,
 }
 
 impl Database {
     fn new() -> Self{
         Self {
-            tasks: HashMap::new(),
-            users: HashMap::new()
+            games: HashMap::new(),
         }
     }
 
-    // TODO CRUD DATA
-    fn insert(&mut self, task: Task) {
-        self.tasks.insert(task.id, task);
+    fn insert(&mut self, game: Game) {
+        self.games.insert(game.id, game);
     }
 
-    fn get(&self, id: &u64) -> Option<&Task> {
-        self.tasks.get(id)
+    fn get(&self, id: &u64) -> Option<&Game> {
+        self.games.get(id)
     }
 
-    fn get_all(&self) -> Vec<&Task> {
-        self.tasks.values().collect()
+    fn get_all(&self) -> Vec<&Game> {
+        self.games.values().collect()
     }
 
     fn delete(&mut self, id: &u64){
-        self.tasks.remove(id);
+        self.games.remove(id);
     }
 
-    fn update(&mut self, task: Task) {
-        self.tasks.insert(task.id, task);
+    fn update(&mut self, game: Game) {
+        self.games.insert(game.id, game);
     }
 
-    // USER DATA RELATED FUNCTIONS
-    fn insert_user(&mut self, user: User) {
-        self.users.insert(user.id, user);
-    }
-
-    fn get_user_by_name(&self, username: &str) ->Option<&User> {
-        self.users.values().find(|u| u.username == username)
-    }
-
-    // DATABASE SAVING
     fn save_to_file(&self) -> std::io::Result<()> {
         let data = serde_json::to_string(&self)?;
         let mut file = fs::File::create("database.json")?;
         file.write_all(data.as_bytes())?;
         Ok(())
-
     }
 
     fn load_from_file() -> std::io::Result<Self> {
@@ -86,59 +68,36 @@ impl Database {
 
 struct AppState {
     db: Mutex<Database>
-    
 }
 
-async fn create_task(app_state: web::Data<AppState>, task: web::Json<Task>) -> impl Responder {
+async fn create_game(app_state: web::Data<AppState>, game: web::Json<Game>) -> impl Responder {
     let mut db = app_state.db.lock().expect("failed to lock database");
-    db.insert(task.into_inner());
+    let mut game = game.into_inner();
+    game.number = rand::thread_rng().gen_range(1..101);
+    game.hint = String::from("Guess a number between 1 and 100");
+    game.result = String::from("Game started");
+    db.insert(game.clone());
     let _ = db.save_to_file();
-    HttpResponse::Ok().finish()
+    HttpResponse::Ok().json(game)
 }
 
-async fn read_task(app_state: web::Data<AppState>, id: web::Path<u64>) -> impl Responder {
-    let db = app_state.db.lock().expect("failed to lock database");
-    match db.get(&id.into_inner()) {
-        Some(task) => HttpResponse::Ok().json(task),
-        None => HttpResponse::NotFound().finish()
-    }
-}
-
-async fn read_all_task(app_state: web::Data<AppState>) -> impl Responder {
-    let db = app_state.db.lock().expect("failed to lock database");
-    let tasks = db.get_all();
-    HttpResponse::Ok().json(tasks)
-}
-
-async fn update_task(app_state: web::Data<AppState>, task: web::Json<Task>) -> impl Responder {
-    let mut db = app_state.db.lock().expect("failed to lock database");
-    db.update(task.into_inner());
-    let _ = db.save_to_file();
-    HttpResponse::Ok().finish()
-}
-
-async fn delete_task(app_state: web::Data<AppState>, id: web::Path<u64>) -> impl Responder {
-    let mut db = app_state.db.lock().expect("failed to lock database");
-    db.delete(&id.into_inner());
-    let _ = db.save_to_file();
-    HttpResponse::Ok().finish()
-}
-
-// Insert user
-async fn register(app_state: web::Data<AppState>, user: web::Json<User>) -> impl Responder {
-    let mut db = app_state.db.lock().expect("failed to lock database");
-    db.insert_user(user.into_inner());
-    let _ = db.save_to_file();
-    HttpResponse::Ok().finish()
-}
-
-async fn login(app_state: web::Data<AppState>, user: web::Json<User>) -> impl Responder {
-    let db = app_state.db.lock().expect("failed to lock database");
-    match db.get_user_by_name(&user.username) {
-        Some(stored_user) if stored_user.password == user.password => {
-            HttpResponse::Ok().body("Logged in! Welcome!")
-        },
-        _ => HttpResponse::BadRequest().body("Invalid username or password!")
+async fn guess_number(app_state: web::Data<AppState>, id: web::Path<u64>, guess: web::Json<Game>) -> impl Responder {
+    let db_lock = app_state.db.lock().unwrap();
+    let mut db = db_lock;
+    if let Some(mut game) = db.get(&id).cloned() {
+        if guess.guess < game.number {
+            game.hint = "Too low!".to_string();
+        } else if guess.guess > game.number {
+            game.hint = "Too high!".to_string();
+        } else {
+            game.hint = "Correct!".to_string();
+            game.result = "You won!".to_string();
+        }
+        db.update(game.clone());
+        db.save_to_file().unwrap();
+        HttpResponse::Ok().json(game)  // Return the updated game details as JSON
+    } else {
+        HttpResponse::NotFound().body("Game not found")
     }
 }
 
@@ -167,17 +126,10 @@ async fn main() -> std::io::Result<()>{
                     .max_age(3600)
             )
             .app_data(data.clone())
-            .route("/task", web::post().to(create_task))
-            .route("/task/{id}", web::get().to(read_task))
-            .route("/task", web::get().to(read_all_task))
-            .route("/task", web::put().to(update_task))
-            .route("/task/{id}", web::delete().to(delete_task))
-            .route("/register", web::post().to(register))
-            .route("/login", web::post().to(login))
-
+            .route("/game", web::post().to(create_game))
+            .route("/game/{id}", web::put().to(guess_number))
     })
     .bind("127.0.0.1:8080")?
     .run()
     .await
-
 }

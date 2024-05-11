@@ -1,1 +1,1 @@
-{"tasks":{"1":{"id":1,"name":"NONONO V2","completed":true},"2":{"id":2,"name":"HI","completed":true}},"users":{"1":{"id":1,"username":"Hao's Server","password":"123456"}}}
+{"games":{"123":{"id":123,"guess":1,"number":5,"hint":"Too low!","result":"string"},"3":{"id":3,"guess":10,"number":38,"hint":"Too high!","result":"You won!"}}}
